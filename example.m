@@ -1,0 +1,115 @@
+clc;clear;
+
+% load('Breast_Data.mat')
+% [IMG, mask] = gen_simIMG(data);
+% smap = data{3}.smap;
+
+load('Breast_Data_partial.mat')
+B1 = ones(size(320,320));
+[IMG, mask] = gen_simIMG2(new_data,B1);
+smap = new_data{3}.smap;
+
+figure;imshow3Dfull(abs(IMG),[]);
+
+%% Fully sampled Cartesian k-space
+
+kspace = ifft2c_mri(IMG);
+
+figure;imshow(abs(kspace(:,:,end)));
+
+recon = fft2c_mri(kspace);
+figure;imshow3Dfull(abs(recon),[]);
+
+
+%% Under-sampled Cartesian k-space
+
+kspace(:,1:2:end,:) = 0;
+IMG_recon = fft2c_mri(kspace);
+
+figure;imshow3Dfull(abs(IMG_recon),[]);
+
+%% Radial "fully" sampled k-space
+
+addpath(genpath('nufft_toolbox\'))
+
+spokes_per_frame = 89;
+
+nx = size(IMG,1)*2;
+ntviews = spokes_per_frame * size(IMG,3);
+traj = Trajectory_GoldenAngle_GROG(ntviews,nx)/nx;
+
+dcf = repmat(abs(linspace(-1,1,nx))',[1,ntviews]);
+
+clear dcfu traju
+for t = 1:size(IMG,3)
+    dcfu(:,:,t) = dcf(:,(t-1)*spokes_per_frame+1:t*spokes_per_frame);
+    traju(:,:,t) = traj(:,(t-1)*spokes_per_frame+1:t*spokes_per_frame);
+end
+
+smap=double(smap/max(abs(smap(:))));
+%     smap = ones(size(smap));
+param.E = MCNUFFT(traju,dcfu,smap);
+
+kspace = param.E * double(IMG);
+kspace = kspace ./ repmat(reshape(sqrt(dcfu),[nx,spokes_per_frame,1,size(IMG,3)]),[1,1,size(smap,3),1]);
+
+recon_wodcf = param.E' * kspace;
+
+kspace_dcf = kspace .* repmat(reshape(sqrt(dcfu),[nx,spokes_per_frame,1,size(IMG,3)]),[1,1,size(smap,3),1]);
+recon = param.E' * kspace_dcf;
+
+recon_wodcf = recon_wodcf./max(recon_wodcf(:));
+recon = recon./max(recon(:));
+figure;imshow3Dfull(cat(2,abs(recon_wodcf),abs(recon)),[])
+
+%% In case you are running my code 'run_iter_grasp'
+
+kspace = permute(kspace,[1,2,4,3]); % Swapping time and coil dim
+kspace = reshape(kspace,[nx,size(kspace,2)*size(kspace,3),size(kspace,4)]);
+
+%% UnderSampled radial data
+
+spokes_per_frame = 34;
+
+nx = size(IMG,1)*2;
+ntviews = spokes_per_frame * size(IMG,3);
+traj = Trajectory_GoldenAngle_GROG(ntviews,nx)/nx;
+
+dcf = repmat(abs(linspace(-1,1,nx))',[1,ntviews]);
+
+clear dcfu traju
+for t = 1:size(IMG,3)
+    dcfu(:,:,t) = dcf(:,(t-1)*spokes_per_frame+1:t*spokes_per_frame);
+    traju(:,:,t) = traj(:,(t-1)*spokes_per_frame+1:t*spokes_per_frame);
+end
+
+smap=double(smap/max(abs(smap(:))));
+%     smap = ones(size(smap));
+param.E = MCNUFFT(traju,dcfu,smap);
+
+kspace = param.E * double(IMG);
+kspace = kspace ./ repmat(reshape(sqrt(dcfu),[nx,spokes_per_frame,1,size(IMG,3)]),[1,1,size(smap,3),1]);
+
+recon_wodcf = param.E' * kspace;
+
+kspace_dcf = kspace .* repmat(reshape(sqrt(dcfu),[nx,spokes_per_frame,1,size(IMG,3)]),[1,1,size(smap,3),1]);
+recon = param.E' * kspace_dcf;
+
+recon_wodcf = recon_wodcf./max(recon_wodcf(:));
+recon = recon./max(recon(:));
+
+figure;imshow3Dfull(cat(2,abs(recon_wodcf),abs(recon)),[])
+
+%%
+option.lamb = 0.001;
+option.niter = 5;
+option.GPU = 1;
+
+Traj = Trajectory_GoldenAngle_GROG(size(kspace,2),640);
+tic;
+option.method = 'grog';
+[GRASP_grog,nufft_grog,smap] = run_iter_grasp(kspace,Traj,dcf,spokes_per_frame,option);
+grog_time = toc;
+
+GRASP_grog = fliplr(flipud(GRASP_grog));
+% GRASP_grog = rot90(GRASP_grog);
